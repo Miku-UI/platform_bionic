@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,36 +26,49 @@
  * SUCH DAMAGE.
  */
 
-#include <errno.h>
+// LLD tries not to generate a PT_TLS segment where (p_vaddr % p_align) is
+// non-zero. It can still do so if the p_align values are greater than a page.
+
 #include <stdint.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
-#include "platform/bionic/macros.h"
-#include "platform/bionic/page.h"
-#include "private/ErrnoRestorer.h"
+#include "CHECK.h"
 
-// mmap2(2) is like mmap(2), but the offset is in 4096-byte blocks, not bytes.
-extern "C" void*  __mmap2(void*, size_t, int, int, int, size_t);
+struct SmallVar {
+  int field;
+  char buffer[0x100 - sizeof(int)];
+};
 
-#define MMAP2_SHIFT 12 // 2**12 == 4096
+struct AlignedVar {
+  int field;
+  char buffer[0x20000 - sizeof(int)];
+} __attribute__((aligned(0x20000)));
 
-void* mmap64(void* addr, size_t size, int prot, int flags, int fd, off64_t offset) {
-  if (offset < 0 || (offset & ((1UL << MMAP2_SHIFT)-1)) != 0) {
-    errno = EINVAL;
-    return MAP_FAILED;
-  }
+__thread struct SmallVar var1 = {13};
+__thread struct SmallVar var2 = {17};
+__thread struct AlignedVar var3;
+__thread struct AlignedVar var4;
 
-  // Prevent allocations large enough for `end - start` to overflow.
-  size_t rounded = __BIONIC_ALIGN(size, page_size());
-  if (rounded < size || rounded > PTRDIFF_MAX) {
-    errno = ENOMEM;
-    return MAP_FAILED;
-  }
-
-  return __mmap2(addr, size, prot, flags, fd, offset >> MMAP2_SHIFT);
+static uintptr_t var_addr(void* value) {
+  // Maybe the optimizer would assume that the variable has the alignment it is
+  // declared with.
+  asm volatile("" : "+r,m"(value) : : "memory");
+  return reinterpret_cast<uintptr_t>(value);
 }
 
-void* mmap(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
-  return mmap64(addr, size, prot, flags, fd, static_cast<off64_t>(offset));
+int main() {
+  // Bionic only allocates ELF TLS blocks with up to page alignment.
+  CHECK((var_addr(&var3) & (getpagesize() - 1)) == 0);
+  CHECK((var_addr(&var4) & (getpagesize() - 1)) == 0);
+
+  // TODO: These TLS accesses are broken with the current version of LLD. See
+  // https://github.com/llvm/llvm-project/issues/84743.
+#if !defined(__riscv)
+  CHECK(var1.field == 13);
+  CHECK(var2.field == 17);
+#endif
+
+  CHECK(var3.field == 0);
+  CHECK(var4.field == 0);
+  return 0;
 }

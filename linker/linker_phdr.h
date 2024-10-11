@@ -43,8 +43,8 @@ class ElfReader {
  public:
   ElfReader();
 
-  bool Read(const char* name, int fd, off64_t file_offset, off64_t file_size);
-  bool Load(address_space_params* address_space);
+  [[nodiscard]] bool Read(const char* name, int fd, off64_t file_offset, off64_t file_size);
+  [[nodiscard]] bool Load(address_space_params* address_space);
 
   const char* name() const { return name_.c_str(); }
   size_t phdr_count() const { return phdr_num_; }
@@ -61,18 +61,18 @@ class ElfReader {
   bool should_pad_segments() const { return should_pad_segments_; }
 
  private:
-  bool ReadElfHeader();
-  bool VerifyElfHeader();
-  bool ReadProgramHeaders();
-  bool ReadSectionHeaders();
-  bool ReadDynamicSection();
-  bool ReadPadSegmentNote();
-  bool ReserveAddressSpace(address_space_params* address_space);
-  bool LoadSegments();
-  bool FindPhdr();
-  bool FindGnuPropertySection();
-  bool CheckPhdr(ElfW(Addr));
-  bool CheckFileRange(ElfW(Addr) offset, size_t size, size_t alignment);
+  [[nodiscard]] bool ReadElfHeader();
+  [[nodiscard]] bool VerifyElfHeader();
+  [[nodiscard]] bool ReadProgramHeaders();
+  [[nodiscard]] bool ReadSectionHeaders();
+  [[nodiscard]] bool ReadDynamicSection();
+  [[nodiscard]] bool ReadPadSegmentNote();
+  [[nodiscard]] bool ReserveAddressSpace(address_space_params* address_space);
+  [[nodiscard]] bool LoadSegments();
+  [[nodiscard]] bool FindPhdr();
+  [[nodiscard]] bool FindGnuPropertySection();
+  [[nodiscard]] bool CheckPhdr(ElfW(Addr));
+  [[nodiscard]] bool CheckFileRange(ElfW(Addr) offset, size_t size, size_t alignment);
 
   bool did_read_;
   bool did_load_;
@@ -128,13 +128,14 @@ size_t phdr_table_get_load_size(const ElfW(Phdr)* phdr_table, size_t phdr_count,
 size_t phdr_table_get_maximum_alignment(const ElfW(Phdr)* phdr_table, size_t phdr_count);
 
 int phdr_table_protect_segments(const ElfW(Phdr)* phdr_table, size_t phdr_count,
-                                ElfW(Addr) load_bias, const GnuPropertySection* prop = nullptr);
+                                ElfW(Addr) load_bias, bool should_pad_segments,
+                                const GnuPropertySection* prop = nullptr);
 
 int phdr_table_unprotect_segments(const ElfW(Phdr)* phdr_table, size_t phdr_count,
-                                  ElfW(Addr) load_bias);
+                                  ElfW(Addr) load_bias, bool should_pad_segments);
 
 int phdr_table_protect_gnu_relro(const ElfW(Phdr)* phdr_table, size_t phdr_count,
-                                 ElfW(Addr) load_bias);
+                                 ElfW(Addr) load_bias, bool should_pad_segments);
 
 int phdr_table_serialize_gnu_relro(const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                    ElfW(Addr) load_bias, int fd, size_t* file_offset);
@@ -153,3 +154,5 @@ void phdr_table_get_dynamic_section(const ElfW(Phdr)* phdr_table, size_t phdr_co
 
 const char* phdr_table_get_interpreter_name(const ElfW(Phdr)* phdr_table, size_t phdr_count,
                                             ElfW(Addr) load_bias);
+
+bool page_size_migration_supported();

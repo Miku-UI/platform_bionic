@@ -187,7 +187,8 @@ static bool process_relocation_impl(Relocator& relocator, const rel_t& reloc) {
   auto protect_segments = [&]() {
     // Make .text executable.
     if (phdr_table_protect_segments(relocator.si->phdr, relocator.si->phnum,
-                                    relocator.si->load_bias) < 0) {
+                                    relocator.si->load_bias,
+                                    relocator.si->should_pad_segments()) < 0) {
       DL_ERR("can't protect segments for \"%s\": %s",
              relocator.si->get_realpath(), strerror(errno));
       return false;
@@ -197,7 +198,8 @@ static bool process_relocation_impl(Relocator& relocator, const rel_t& reloc) {
   auto unprotect_segments = [&]() {
     // Make .text writable.
     if (phdr_table_unprotect_segments(relocator.si->phdr, relocator.si->phnum,
-                                      relocator.si->load_bias) < 0) {
+                                      relocator.si->load_bias,
+                                      relocator.si->should_pad_segments()) < 0) {
       DL_ERR("can't unprotect loadable segments for \"%s\": %s",
              relocator.si->get_realpath(), strerror(errno));
       return false;
@@ -419,6 +421,7 @@ static bool process_relocation_impl(Relocator& relocator, const rel_t& reloc) {
         } else {
           CHECK(found_in->get_tls() != nullptr); // We rejected a missing TLS segment above.
           module_id = found_in->get_tls()->module_id;
+          CHECK(module_id != kTlsUninitializedModuleId);
         }
         trace_reloc("RELO TLS_DTPMOD %16p <- %zu %s",
                     rel_target, module_id, sym_name);
@@ -435,9 +438,9 @@ static bool process_relocation_impl(Relocator& relocator, const rel_t& reloc) {
       }
       break;
 
-#if defined(__aarch64__)
-    // Bionic currently only implements TLSDESC for arm64. This implementation should work with
-    // other architectures, as long as the resolver functions are implemented.
+#if defined(__aarch64__) || defined(__riscv)
+    // Bionic currently implements TLSDESC for arm64 and riscv64. This implementation should work
+    // with other architectures, as long as the resolver functions are implemented.
     case R_GENERIC_TLSDESC:
       count_relocation_if<IsGeneral>(kRelocRelative);
       {
@@ -479,7 +482,7 @@ static bool process_relocation_impl(Relocator& relocator, const rel_t& reloc) {
         }
       }
       break;
-#endif  // defined(__aarch64__)
+#endif  // defined(__aarch64__) || defined(__riscv)
 
 #if defined(__x86_64__)
     case R_X86_64_32:
@@ -586,6 +589,11 @@ static bool packed_relocate(Relocator& relocator, Args ...args) {
 }
 
 bool soinfo::relocate(const SymbolLookupList& lookup_list) {
+  // For ldd, don't apply relocations because TLS segments are not registered.
+  // We don't care whether ldd diagnoses unresolved symbols.
+  if (g_is_ldd) {
+    return true;
+  }
 
   VersionTracker version_tracker;
 
@@ -600,6 +608,17 @@ bool soinfo::relocate(const SymbolLookupList& lookup_list) {
   relocator.si_symtab = symtab_;
   relocator.tlsdesc_args = &tlsdesc_args_;
   relocator.tls_tp_base = __libc_shared_globals()->static_tls_layout.offset_thread_pointer();
+
+  // The linker already applied its RELR relocations in an earlier pass, so
+  // skip the RELR relocations for the linker.
+  if (relr_ != nullptr && !is_linker()) {
+    DEBUG("[ relocating %s relr ]", get_realpath());
+    const ElfW(Relr)* begin = relr_;
+    const ElfW(Relr)* end = relr_ + relr_count_;
+    if (!relocate_relr(begin, end, load_bias)) {
+      return false;
+    }
+  }
 
   if (android_relocs_ != nullptr) {
     // check signature
@@ -618,13 +637,6 @@ bool soinfo::relocate(const SymbolLookupList& lookup_list) {
       }
     } else {
       DL_ERR("bad android relocation header.");
-      return false;
-    }
-  }
-
-  if (relr_ != nullptr) {
-    DEBUG("[ relocating %s relr ]", get_realpath());
-    if (!relocate_relr()) {
       return false;
     }
   }
@@ -660,14 +672,14 @@ bool soinfo::relocate(const SymbolLookupList& lookup_list) {
 
   // Once the tlsdesc_args_ vector's size is finalized, we can write the addresses of its elements
   // into the TLSDESC relocations.
-#if defined(__aarch64__)
-  // Bionic currently only implements TLSDESC for arm64.
+#if defined(__aarch64__) || defined(__riscv)
+  // Bionic currently only implements TLSDESC for arm64 and riscv64.
   for (const std::pair<TlsDescriptor*, size_t>& pair : relocator.deferred_tlsdesc_relocs) {
     TlsDescriptor* desc = pair.first;
     desc->func = tlsdesc_resolver_dynamic;
     desc->arg = reinterpret_cast<size_t>(&tlsdesc_args_[pair.second]);
   }
-#endif
+#endif // defined(__aarch64__) || defined(__riscv)
 
   return true;
 }

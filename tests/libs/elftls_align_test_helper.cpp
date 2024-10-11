@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,33 +26,38 @@
  * SUCH DAMAGE.
  */
 
-#include <errno.h>
-#include <sys/mman.h>
-#include <stdarg.h>
 #include <stdint.h>
-#include <unistd.h>
 
-#include "platform/bionic/macros.h"
-#include "platform/bionic/page.h"
+#include "CHECK.h"
 
-extern "C" void* __mremap(void*, size_t, size_t, int, void*);
+struct AlignedVar {
+  int field;
+  char buffer[0x1000 - sizeof(int)];
+} __attribute__((aligned(0x400)));
 
-void* mremap(void* old_address, size_t old_size, size_t new_size, int flags, ...) {
-  // prevent allocations large enough for `end - start` to overflow
-  size_t rounded = __BIONIC_ALIGN(new_size, page_size());
-  if (rounded < new_size || rounded > PTRDIFF_MAX) {
-    errno = ENOMEM;
-    return MAP_FAILED;
-  }
+struct SmallVar {
+  int field;
+  char buffer[0xeee - sizeof(int)];
+};
 
-  void* new_address = nullptr;
-  // The optional argument is only valid if the MREMAP_FIXED flag is set,
-  // so we assume it's not present otherwise.
-  if ((flags & MREMAP_FIXED) != 0) {
-    va_list ap;
-    va_start(ap, flags);
-    new_address = va_arg(ap, void*);
-    va_end(ap);
-  }
-  return __mremap(old_address, old_size, new_size, flags, new_address);
+// The single .tdata section should have a size that isn't a multiple of its
+// alignment.
+__thread struct AlignedVar var1 = {13};
+__thread struct AlignedVar var2 = {17};
+__thread struct SmallVar var3 = {19};
+
+static uintptr_t var_addr(void* value) {
+  // Maybe the optimizer would assume that the variable has the alignment it is
+  // declared with.
+  asm volatile("" : "+r,m"(value) : : "memory");
+  return reinterpret_cast<uintptr_t>(value);
+}
+
+int main() {
+  CHECK((var_addr(&var1) & 0x3ff) == 0);
+  CHECK((var_addr(&var2) & 0x3ff) == 0);
+  CHECK(var1.field == 13);
+  CHECK(var2.field == 17);
+  CHECK(var3.field == 19);
+  return 0;
 }

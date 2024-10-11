@@ -57,6 +57,7 @@ extern "C" void scudo_malloc_set_zero_contents(int);
 extern "C" void scudo_malloc_set_pattern_fill_contents(int);
 
 __LIBC_HIDDEN__ constinit WriteProtected<libc_globals> __libc_globals;
+__LIBC_HIDDEN__ constinit _Atomic(bool) __libc_memtag_stack;
 
 // Not public, but well-known in the BSDs.
 __BIONIC_WEAK_VARIABLE_FOR_NATIVE_BRIDGE
@@ -95,7 +96,7 @@ void __libc_init_scudo() {
   SetDefaultHeapTaggingLevel();
 
 // TODO(b/158870657) make this unconditional when all devices support SCUDO.
-#if defined(USE_SCUDO)
+#if defined(USE_SCUDO) && !__has_feature(hwaddress_sanitizer)
 #if defined(SCUDO_PATTERN_FILL_CONTENTS)
   scudo_malloc_set_pattern_fill_contents(1);
 #elif defined(SCUDO_ZERO_CONTENTS)
@@ -181,7 +182,7 @@ void __libc_init_fork_handler() {
 extern "C" void scudo_malloc_set_add_large_allocation_slack(int add_slack);
 
 __BIONIC_WEAK_FOR_NATIVE_BRIDGE void __libc_set_target_sdk_version(int target __unused) {
-#if defined(USE_SCUDO)
+#if defined(USE_SCUDO) && !__has_feature(hwaddress_sanitizer)
   scudo_malloc_set_add_large_allocation_slack(target < __ANDROID_API_S__);
 #endif
 }
