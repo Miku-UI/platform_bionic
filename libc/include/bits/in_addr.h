@@ -36,9 +36,12 @@
 #include <sys/cdefs.h>
 #include <stdint.h>
 
+__BEGIN_DECLS
 #include <inaddr.h>
 
 /** A structure representing an IPv4 address. */
 struct in_addr {
   in_addr_t s_addr;
 };
+
+__END_DECLS
